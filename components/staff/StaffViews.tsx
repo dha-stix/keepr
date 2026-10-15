@@ -64,7 +64,7 @@ export function FrontDesk() {
           />
         </div>
 
-        <Panel title={q ? `Results for “${q}”` : "Arrivals and departures"} action={<span className="text-xs text-muted">Confirm payment, then check the guest in</span>}>
+        <Panel title={q ? `Results for “${q}”` : "Arrivals and departures"} action={<span className="text-xs text-muted">Payments to confirm first, then arrivals by date</span>}>
           {loading ? <div className="skeleton h-48" /> : <DeskQueue bookings={queue} />}
         </Panel>
 
@@ -75,7 +75,7 @@ export function FrontDesk() {
 }
 
 function DeskQueue({ bookings }: { bookings: Booking[] }) {
-  if (!bookings.length) return <EmptyState title="All clear">No arrivals or departures waiting on the desk right now.</EmptyState>;
+  if (!bookings.length) return <EmptyState title="All clear">No payments to confirm, upcoming arrivals or departures right now.</EmptyState>;
   return (
     <div className="overflow-x-auto">
       <table className="table">

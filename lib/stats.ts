@@ -125,16 +125,19 @@ export function deskSummary(rooms: Room[], bookings: Booking[], today: string) {
   };
 }
 
-/** Bookings the desk needs to act on today: arrivals, in-house guests leaving, and paid bookings waiting for confirmation */
+/**
+ * Bookings the desk needs to act on: every paid booking waiting for its payment to be confirmed, every confirmed
+ * guest who hasn't checked in yet (today's arrivals first, then upcoming ones), guests checked in today (or early),
+ * in-house guests due to leave, and today's check-outs.
+ */
 export function deskQueue(bookings: Booking[], today: string) {
   const rank: Record<string, number> = { paid: 0, confirmed: 1, checked_in: 2, checked_out: 3 };
   return bookings
     .filter(
       b =>
-        (b.checkIn === today && ["paid", "confirmed", "checked_in"].includes(b.status)) ||
-        (b.status === "checked_in" && b.checkOut <= today) ||
-        (b.checkOut === today && b.status === "checked_out") ||
-        (b.status === "paid" && b.checkIn <= addDays(today, 1)),
+        ((b.status === "paid" || b.status === "confirmed") && b.checkOut > today) ||
+        (b.status === "checked_in" && (b.checkIn >= today || b.checkOut <= today)) ||
+        (b.status === "checked_out" && b.checkOut === today),
     )
-    .sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || a.roomNumber - b.roomNumber);
+    .sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || a.checkIn.localeCompare(b.checkIn) || a.roomNumber - b.roomNumber);
 }

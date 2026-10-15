@@ -5,16 +5,19 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { Spinner } from "@/components/ui/bits";
 import { useToast } from "@/components/ui/Toaster";
 import { checkInGuest, checkOutGuest, confirmPayment } from "@/lib/firebase-actions";
+import { useToday } from "@/lib/hooks";
 import type { Booking } from "@/lib/types";
+import { formatDate } from "@/lib/utils";
 
 /**
  * The front desk's next step for a booking. Check-in stays locked until the payment is confirmed,
- * so nobody is lodged without the money being checked.
+ * so nobody is lodged without the money being checked, and until the guest's check-in day.
  */
 export function DeskActions({ booking: b }: { booking: Booking }) {
   const { user } = useAuth();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const today = useToday();
   if (!user) return null;
   const actor = { uid: user.uid, name: user.name };
 
@@ -41,12 +44,20 @@ export function DeskActions({ booking: b }: { booking: Booking }) {
         </button>
       </div>
     );
-  if (b.status === "confirmed")
+  if (b.status === "confirmed") {
+    // Upcoming guests are listed so the desk can prepare, but check-in opens on their check-in day (hotel time)
+    const early = !today || b.checkIn > today;
     return (
-      <button className="btn btn-sm" disabled={busy} onClick={() => run(checkInGuest, `${b.guestName} checked in to room ${b.roomNumber}`)}>
-        {busy && <Spinner className="h-3 w-3" />} Check in
+      <button
+        className="btn btn-sm"
+        disabled={busy || early}
+        title={early ? `Check-in opens on ${formatDate(b.checkIn, { weekday: "short", day: "numeric", month: "short" })}` : undefined}
+        onClick={() => run(checkInGuest, `${b.guestName} checked in to room ${b.roomNumber}`)}
+      >
+        {busy && <Spinner className="h-3 w-3" />} {early && today ? `Arrives ${formatDate(b.checkIn, { weekday: "short", day: "numeric", month: "short" })}` : "Check in"}
       </button>
     );
+  }
   if (b.status === "checked_in")
     return (
       <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(checkOutGuest, `${b.guestName} checked out. Room ${b.roomNumber} set to cleaning`)}>
