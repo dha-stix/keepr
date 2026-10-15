@@ -10,7 +10,7 @@ import { EmptyState, Field, Spinner } from "@/components/ui/bits";
 import { Logo } from "@/components/ui/Logo";
 import { Ring } from "@/components/ui/motion";
 import { AIRPORT_PICKUP_FEE, HOLD_MINUTES } from "@/lib/constants";
-import { startCheckout, subscribeToBooking, updateBookingDetails } from "@/lib/firebase-actions";
+import { confirmCheckout, startCheckout, subscribeToBooking, updateBookingDetails } from "@/lib/firebase-actions";
 import { holdExpiryMs } from "@/lib/booking-rules";
 import { useLive } from "@/lib/hooks";
 import type { Booking } from "@/lib/types";
@@ -52,11 +52,7 @@ export function CheckoutView({ params }: { params: Promise<{ bookingId: string }
               <Link href="/rooms" className="link">Pick a room again</Link>
             </EmptyState>
           ) : returned === "returned" ? (
-            <motion.div key="wait" className="card grid justify-items-center gap-3 p-10 text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <Spinner className="h-6 w-6 text-pine" />
-              <p className="font-semibold">Confirming your payment with Bachs…</p>
-              <p className="max-w-sm text-sm text-muted">This usually takes a few seconds. This page updates by itself once the payment lands.</p>
-            </motion.div>
+            <ConfirmingPayment key="wait" bookingId={booking.id} />
           ) : (
             <PaymentForm key="pay" booking={booking} cancelled={returned === "cancelled"} />
           )}
@@ -159,6 +155,42 @@ function PaymentForm({ booking, cancelled }: { booking: Booking; cancelled: bool
         </div>
       )}
     </motion.form>
+  );
+}
+
+/**
+ * Shown when the guest comes back from Bachs. Asks the server to check the payment with Bachs every few seconds
+ * (the Bachs webhook usually gets there first); the booking subscription above switches to the keycard once it's paid.
+ */
+function ConfirmingPayment({ bookingId }: { bookingId: string }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    let stopped = false;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      tries++;
+      const status = await confirmCheckout(bookingId).catch(() => "pending_payment");
+      if (stopped || status !== "pending_payment") return;
+      if (tries === 12) setSlow(true); // about a minute
+      if (tries < 60) timer = setTimeout(check, 5000);
+    };
+    void check();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [bookingId]);
+  return (
+    <motion.div className="card grid justify-items-center gap-3 p-10 text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <Spinner className="h-6 w-6 text-pine" />
+      <p className="font-semibold">Confirming your payment with Bachs…</p>
+      <p className="max-w-sm text-sm text-muted">
+        {slow
+          ? "Bachs is taking longer than usual. If you paid by bank transfer it can take a few minutes; you can leave this page and check My bookings."
+          : "This usually takes a few seconds. This page updates by itself once the payment lands."}
+      </p>
+    </motion.div>
   );
 }
 

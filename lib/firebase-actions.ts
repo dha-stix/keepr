@@ -346,6 +346,14 @@ export const cancelBooking = (b: Booking, actor: Actor) => runDeskAction(b, "can
 
 /* ================================================================== PAYMENTS */
 
+/** After returning from Bachs: has the server check the payment with Bachs. Returns the booking's status. */
+export async function confirmCheckout(bookingId: string): Promise<string> {
+  const res = await fetch("/api/bachs/confirm", { method: "POST", headers: await authHeader(), body: JSON.stringify({ bookingId }) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `Couldn't check the payment (server error ${res.status}).`);
+  return body.status;
+}
+
 /**
  * Starts payment for a booking: our API route creates a Bachs checkout and we redirect to it;
  * the Bachs webhook marks the booking paid.

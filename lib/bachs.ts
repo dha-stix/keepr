@@ -134,6 +134,32 @@ export function parseCollectionEvent(event: Record<string, unknown>): Collection
   };
 }
 
+/**
+ * Asks Bachs whether a checkout session was paid (GET /v1/checkout-sessions/{id}). Returns the payment in the same
+ * shape as a collection.succeeded event, or null while it isn't paid yet.
+ */
+export async function getCheckoutPayment(checkoutId: string): Promise<CollectionEvent | null> {
+  const session = await bachs<Record<string, unknown>>(`/v1/checkout-sessions/${encodeURIComponent(checkoutId)}`);
+  const charge = (session.charge ?? null) as Record<string, unknown> | null;
+  if (String(session.payment_status ?? "").toLowerCase() !== "succeeded" || !charge) return null;
+  const metadata = (session.metadata ?? {}) as Record<string, unknown>;
+  const fees = (charge.fees ?? {}) as Record<string, unknown>;
+  const num = (v: unknown) => (v == null || v === "" ? undefined : Number(v));
+  return {
+    // Same charge, so the payment doc (keyed by charge id) is shared with the webhook's
+    eventId: `checkout-${checkoutId}`,
+    createdAt: String(charge.completed_at ?? session.completed_at ?? ""),
+    status: String(charge.status ?? "").toUpperCase(),
+    bookingId: typeof metadata.bookingId === "string" ? metadata.bookingId : undefined,
+    checkoutId: String(session.checkout_id ?? checkoutId),
+    chargeId: typeof charge.payment_id === "string" ? charge.payment_id : undefined,
+    amount: num(charge.amount_paid) ?? num(charge.amount) ?? 0,
+    currency: String(charge.currency ?? ""),
+    processingFee: num(fees.amount),
+    method: typeof charge.payment_method === "string" ? charge.payment_method : undefined,
+  };
+}
+
 /* ===================================================== PAYOUT ACCOUNTS (bank details)
  * Docs: Payouts → Create a payout, API reference → Payout Destinations, Reference → List banks,
  * Misc → Resolve a bank account, Balances → Retrieve balances.

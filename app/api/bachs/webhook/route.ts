@@ -1,15 +1,16 @@
-import { PAID_STATUSES, parseCollectionEvent, parseRefundEvent, verifyWebhook, type RefundEvent } from "@/lib/bachs";
+import { parseCollectionEvent, parseRefundEvent, verifyWebhook, type RefundEvent } from "@/lib/bachs";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
+import { recordCollection } from "@/lib/payments";
 import { applyRefund } from "@/lib/refunds";
 import { withIsoDates } from "@/lib/timestamps";
 import type { Booking, Payment } from "@/lib/types";
-import { priceBooking } from "@/lib/utils";
 
 /**
  * Bachs webhook. Subscribe your endpoint to `collection.succeeded`, `refund.created`, `refund.paid` and
  * `refund.failed`, and point it at https://<your-domain>/api/bachs/webhook.
- * This is the only place a booking becomes "paid", and where refunds are confirmed.
+ * One of the two places a booking becomes "paid" (the other is /api/bachs/confirm, both via lib/payments.ts),
+ * and where refunds are confirmed.
  *
  * Responses follow Bachs' retry rules: 400 for a delivery we reject (bad signature, unreadable body),
  * 5xx when our own processing fails so Bachs retries, and 200 for everything else, including events we ignore.
@@ -43,64 +44,7 @@ export async function POST(req: Request) {
       return Response.json({ received: true, ignored: "no booking" });
     }
 
-    const result = await db.runTransaction(async tx => {
-      // At-least-once delivery: remember every event id we've handled
-      const seenRef = db.collection("webhook_events").doc(collection.eventId);
-      if ((await tx.get(seenRef)).exists) return "duplicate";
-      const ref = db.collection("bookings").doc(bookingId);
-      const snap = await tx.get(ref);
-      if (!snap.exists) return "no booking";
-      const booking = { ...withIsoDates(snap.data()), id: snap.id } as Booking;
-
-      tx.set(seenRef, { type: "collection.succeeded", bookingId, receivedAt: FieldValue.serverTimestamp() });
-      if (booking.status !== "pending_payment") return "already paid";
-
-      const expected = priceBooking(booking).total;
-      const now = FieldValue.serverTimestamp(); // Firebase's clock for every time written here
-      const enough = PAID_STATUSES.includes(collection.status) && collection.currency === "NGN" && collection.amount >= expected;
-      if (!enough) {
-        // Money arrived but not the full amount (or in another currency): flag it for a manager instead of confirming the stay
-        tx.set(db.collection("activity").doc(), {
-          type: "payment_received",
-          message: `Bachs reported ${collection.currency} ${collection.amount.toLocaleString("en-NG")} (${collection.status}) for ${booking.code}, but ₦${expected.toLocaleString("en-NG")} is due. Check it in the Bachs dashboard.`,
-          actorId: "bachs",
-          actorName: "Bachs",
-          createdAt: now,
-        });
-        return "underpaid";
-      }
-
-      const reference = collection.chargeId ?? collection.eventId;
-      tx.update(ref, { status: "paid", paymentRef: reference, paidAt: now, total: expected });
-      tx.update(db.collection("holds").doc(booking.id), { status: "paid" });
-      // paidAt is Firebase server time (read back as an ISO string)
-      const payment: Omit<Payment, "id" | "paidAt"> & { paidAt: FieldValue } = {
-        bookingId: booking.id,
-        bookingCode: booking.code,
-        userId: booking.userId,
-        guestName: booking.guestName,
-        category: booking.category,
-        amount: collection.amount,
-        currency: "NGN",
-        reference,
-        provider: "bachs",
-        status: "succeeded",
-        paidAt: now,
-        ...(collection.method ? { method: collection.method } : {}),
-        ...(collection.checkoutId ? { checkoutId: collection.checkoutId } : {}),
-        ...(collection.settlementAmount != null ? { settlementAmount: collection.settlementAmount } : {}),
-        ...(collection.processingFee != null ? { processingFee: collection.processingFee } : {}),
-      };
-      tx.set(db.collection("payments").doc(reference), payment);
-      tx.set(db.collection("activity").doc(), {
-        type: "payment_received",
-        message: `Bachs payment of ₦${collection.amount.toLocaleString("en-NG")} received for ${booking.code}`,
-        actorId: "bachs",
-        actorName: "Bachs",
-        createdAt: now,
-      });
-      return "paid";
-    });
+    const result = await recordCollection(db, bookingId, collection);
     return Response.json({ received: true, result });
   } catch (err) {
     console.error("Bachs webhook processing failed", err);
