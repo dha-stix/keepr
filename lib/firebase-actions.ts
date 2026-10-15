@@ -353,7 +353,8 @@ export const cancelBooking = (b: Booking, actor: Actor) => runDeskAction(b, "can
 export async function startCheckout(booking: Booking): Promise<{ redirectUrl?: string }> {
   const res = await fetch("/api/bachs/checkout", { method: "POST", headers: await authHeader(), body: JSON.stringify({ bookingId: booking.id }) });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? "We couldn't start the payment. Please try again.");
+  // A reply without our JSON error means the server crashed before Keepr's code ran; the status helps find it in the logs
+  if (!res.ok) throw new Error(body.error ?? `We couldn't start the payment (server error ${res.status}). Please try again.`);
   return { redirectUrl: body.checkoutUrl };
 }
 
