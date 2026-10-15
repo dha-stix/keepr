@@ -1,0 +1,145 @@
+rules_version = '2';
+// Keepr security rules. Deploy with: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function role() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role; }
+    function isStaff() { return signedIn() && role() in ['staff', 'admin']; }
+    function isAdmin() { return signedIn() && role() == 'admin'; }
+    function onlyChanges(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+    function myName() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.name; }
+    // Midnight UTC at the start of a booking's check-in day ("YYYY-MM-DD")
+    function checkInDay(b) {
+      let p = b.checkIn.split('-');
+      return timestamp.date(int(p[0]), int(p[1]), int(p[2]));
+    }
+    function moves(from, to) { return resource.data.status == from && request.resource.data.status == to; }
+    // Times are always Firebase's own clock (serverTimestamp() in the app): a field that is set must equal request.time
+    function serverTime(field) { return request.resource.data[field] == request.time; }
+    // On an update: the field is unchanged, or set to Firebase's time
+    function keptOrServerTime(field) {
+      return request.resource.data.get(field, null) == resource.data.get(field, null) || serverTime(field);
+    }
+    // Current nightly price of a room type: the manager's price, or the built-in default from lib/constants.ts
+    function currentPrice(category) {
+      let path = /databases/$(database)/documents/categories/$(category);
+      return exists(path) ? get(path).data.price : {'standard': 45000, 'exclusive': 95000, 'presidential': 250000}[category];
+    }
+
+    // Profiles. New Google sign-ups can only make themselves customers; nobody can change their own role.
+    // Staff and admin accounts are created by the server (/api/team) with the Admin SDK.
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isStaff());
+      allow create: if signedIn() && request.auth.uid == uid && request.resource.data.role == 'customer'
+        && serverTime('createdAt') && serverTime('lastActive');
+      allow update: if signedIn() && request.auth.uid == uid && request.resource.data.role == resource.data.role
+        && request.resource.data.get('createdAt', null) == resource.data.get('createdAt', null)
+        && keptOrServerTime('lastActive');
+      allow delete: if false;
+    }
+
+    // Room types: price and photos. Everyone can read them; only admin managers change them.
+    match /categories/{category} {
+      allow read: if true;
+      allow write: if isAdmin()
+        && category in ['standard', 'exclusive', 'presidential']
+        && request.resource.data.price is int && request.resource.data.price >= 1000
+        && request.resource.data.photos is list && request.resource.data.photos.size() <= 10
+        && serverTime('updatedAt');
+    }
+
+    // Room inventory is public. The desk only changes a room's status; admins add, edit or remove rooms.
+    match /rooms/{roomId} {
+      allow read: if true;
+      allow update: if isAdmin()
+        || (isStaff() && onlyChanges(['status']) && request.resource.data.status in ['available', 'occupied', 'cleaning']);
+      allow create, delete: if isAdmin();
+    }
+
+    // Public copy of each booking's dates, so guests can check availability without seeing other guests' bookings.
+    match /holds/{bookingId} {
+      allow read: if true;
+      // A hold always mirrors its booking: created with it, and its status follows the booking's
+      allow create: if signedIn()
+        && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.userId == request.auth.uid
+        && request.resource.data.status == 'pending_payment'
+        && request.resource.data.keys().hasOnly(['roomId', 'checkIn', 'checkOut', 'status', 'createdAt'])
+        && serverTime('createdAt')
+        && request.resource.data.roomId == getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.roomId
+        && request.resource.data.checkIn == getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.checkIn
+        && request.resource.data.checkOut == getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.checkOut;
+      allow update: if signedIn()
+        && onlyChanges(['status'])
+        && request.resource.data.status == getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.status
+        && (isStaff() || getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.userId == request.auth.uid);
+    }
+
+    // Guests create unpaid bookings, edit their details while unpaid, and can cancel.
+    // Refund fields (refundStatus, refundId, ...) are written by the server only: no client update may touch them.
+    // Only the server (Bachs webhook) can mark a booking paid. The desk handles everything after that.
+    match /bookings/{bookingId} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isStaff());
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['code', 'userId', 'guestName', 'guestEmail', 'phone', 'roomId', 'roomNumber', 'category',
+             'checkIn', 'checkOut', 'nights', 'guests', 'nightlyRate', 'subtotal', 'extras', 'vat', 'total', 'status',
+             'createdAt'])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending_payment'
+        // The room type must be the room's real type, and the rate today's price for it, so nobody books at a made-up price
+        && get(/databases/$(database)/documents/rooms/$(request.resource.data.roomId)).data.category == request.resource.data.category
+        && get(/databases/$(database)/documents/rooms/$(request.resource.data.roomId)).data.number == request.resource.data.roomNumber
+        && request.resource.data.nightlyRate == currentPrice(request.resource.data.category)
+        // Real dates, starting today or later (one day of slack for time zones)
+        && request.resource.data.checkIn.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.checkOut.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.checkIn < request.resource.data.checkOut
+        && checkInDay(request.resource.data) >= request.time - duration.value(1, 'd')
+        // Firebase's time of booking: the 15-minute unpaid hold runs from here, so nobody can stretch it
+        && serverTime('createdAt')
+        // Guests per room: Standard and Exclusive 2, Presidential 4 (matches lib/constants.ts)
+        && request.resource.data.guests is int && request.resource.data.guests >= 1
+        && request.resource.data.guests <= {'standard': 2, 'exclusive': 2, 'presidential': 4}[request.resource.data.category];
+      allow update: if
+        // Front desk: only the next step of the stay. Nobody but the Bachs webhook (server) marks a booking paid.
+        (isStaff()
+          && onlyChanges(['status', 'confirmedBy', 'checkedInAt', 'checkedOutAt'])
+          && keptOrServerTime('checkedInAt') && keptOrServerTime('checkedOutAt')
+          && (moves('paid', 'confirmed') || moves('confirmed', 'checked_in') || moves('checked_in', 'checked_out')
+              || (resource.data.status in ['pending_payment', 'paid', 'confirmed'] && request.resource.data.status == 'cancelled')))
+        || (signedIn() && resource.data.userId == request.auth.uid && (
+              // Guest details while unpaid (the server re-prices before charging)
+              (resource.data.status == 'pending_payment' && request.resource.data.status == 'pending_payment'
+                && onlyChanges(['guestName', 'phone', 'arrivalWindow', 'airportPickup', 'subtotal', 'extras', 'vat', 'total']))
+              // Cancelling: any time while unpaid; paid bookings until the day before check-in
+           || (request.resource.data.status == 'cancelled' && onlyChanges(['status'])
+                && (resource.data.status == 'pending_payment'
+                    || (resource.data.status in ['paid', 'confirmed'] && request.time < checkInDay(resource.data))))));
+      allow delete: if false;
+    }
+
+    // Payments are written by the server only (Bachs webhook and the admin refund route). The desk records who confirmed them.
+    // Admin managers see all time; staff see the last 8 days (STAFF_PAYMENT_DAYS); guests see their own.
+    // The rule allows 9 days: the app's query starts 8 days back on the browser's clock, which is always a little
+    // behind request.time (and may be off by a few hours), so an exact 8-day limit would reject every staff listener.
+    match /payments/{paymentId} {
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid
+        || isAdmin()
+        || (isStaff() && resource.data.paidAt >= request.time - duration.value(9, 'd')));
+      allow update: if isStaff() && onlyChanges(['confirmedBy']);
+      allow create, delete: if false;
+    }
+
+    // Activity log: people record their own actions under their own name; guests only their bookings and cancellations.
+    match /activity/{entryId} {
+      allow read: if isStaff();
+      allow create: if signedIn()
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.actorName == myName()
+        && (isStaff() || request.resource.data.type in ['booking_created', 'booking_cancelled'])
+        && request.resource.data.type != 'payment_refunded' // refunds are logged by the server
+        && serverTime('createdAt');
+      allow update, delete: if false;
+    }
+  }
+}

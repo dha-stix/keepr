@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@import "./components.css";
+@import "./animations.css";
+
+/* Keepr design tokens. Pine ink + stone paper for calm, brass (the colour of a room key) for actions. */
+@theme {
+  --color-paper: #f2f3ef;
+  --color-surface: #ffffff;
+  --color-sunk: #e6e9e3;
+  --color-ink: #12241f;
+  --color-muted: #5b6b65;
+  --color-line: #d5dbd4;
+  --color-pine: #1e4a3f;
+  --color-pine-deep: #10231e;
+  --color-brass: #a87530;
+  --color-brass-soft: #f1e3cc;
+  --color-on-pine: #f2f3ef;
+  --color-ok: #2e7d5b;
+  --color-warn: #b7791f;
+  --color-bad: #b8432c;
+  --color-info: #2f6690;
+
+  --font-display: var(--font-bodoni), "Didot", "Times New Roman", serif;
+  --font-body: var(--font-outfit), "Avenir Next", system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, Menlo, monospace;
+
+  --ease-keepr: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --radius-card: 14px;
+}
+
+html {
+  color-scheme: light;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  text-wrap: balance;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brass);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-brass-soft);
+}

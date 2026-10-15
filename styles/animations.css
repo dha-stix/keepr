@@ -1,0 +1,113 @@
+/* Ambient and SVG animations. JS-driven motion (reveals, layout, presence) lives in Framer Motion components. */
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes floaty {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-ok) 60%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes kenburns {
+  from {
+    transform: scale(1.02);
+  }
+  to {
+    transform: scale(1.12) translate(-1.5%, -1%);
+  }
+}
+@keyframes draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes shake {
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(3px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-6px);
+  }
+  40%,
+  60% {
+    transform: translateX(6px);
+  }
+}
+
+.animate-floaty {
+  animation: floaty 5s ease-in-out infinite;
+}
+.animate-kenburns {
+  animation: kenburns 18s ease-in-out infinite alternate;
+}
+.animate-marquee {
+  animation: marquee 32s linear infinite;
+}
+.animate-shake {
+  animation: shake 0.5s both;
+}
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-ok);
+  animation: pulse-ring 1.6s infinite;
+}
+
+/* SVG line drawing: give paths pathLength="1" and they draw in; resting state is fully drawn */
+.svg-draw path,
+.svg-draw circle,
+.svg-draw line,
+.svg-draw polyline {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+.svg-draw-in path,
+.svg-draw-in circle {
+  stroke-dasharray: 1;
+  animation: draw 1.2s var(--ease-keepr) both;
+}
+.group:hover .svg-draw path,
+.group:hover .svg-draw circle,
+.group:hover .svg-draw line {
+  animation: draw 0.9s var(--ease-keepr);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
