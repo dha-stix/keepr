@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Keepr's brass keycard (see components/ui/Logo.tsx) on pine, so it reads on light and dark browser tabs -->
+  <rect width="32" height="32" rx="7" fill="#1e4a3f"/>
+  <rect x="9.5" y="5" width="13" height="22" rx="3" fill="#a87530"/>
+  <rect x="12.5" y="8.5" width="7" height="2.4" rx="1.2" fill="#f2f3ef"/>
+</svg>
